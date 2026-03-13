@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: check if user is authenticated
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Helper: get user role from Firestore
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isInstructor() {
+      return isAuth() && getUserRole() == 'instructor';
+    }
+
+    function isStudent() {
+      return isAuth() && getUserRole() == 'student';
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile; instructors can read any profile
+      allow read: if isAuth() && (request.auth.uid == userId || isInstructor());
+      // Users can only create/update their own profile
+      allow create, update: if isAuth() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    // Classes collection
+    match /classes/{classId} {
+      // Anyone authenticated can read classes
+      allow read: if isAuth();
+      // Only instructors can create classes (must own the class)
+      allow create: if isInstructor()
+        && request.resource.data.instructorId == request.auth.uid;
+      // Only the owning instructor can update/delete
+      allow update, delete: if isInstructor()
+        && resource.data.instructorId == request.auth.uid;
+    }
+
+    // Sessions collection
+    match /sessions/{sessionId} {
+      // Anyone authenticated can read sessions
+      allow read: if isAuth();
+      // Only instructors can create/update/delete sessions
+      allow create: if isInstructor();
+      allow update, delete: if isInstructor();
+    }
+
+    // Attendance collection
+    match /attendance/{attendanceId} {
+      // Students can read their own attendance; instructors can read all
+      allow read: if isAuth()
+        && (resource.data.studentId == request.auth.uid || isInstructor());
+      // Students can create their own attendance record
+      allow create: if isStudent()
+        && request.resource.data.studentId == request.auth.uid;
+      // Students can update their own record (for checkout)
+      allow update: if isStudent()
+        && resource.data.studentId == request.auth.uid;
+      allow delete: if false;
+    }
+  }
+}
