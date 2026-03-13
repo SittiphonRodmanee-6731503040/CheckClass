@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/class_model.dart';
 import '../../services/auth_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/location_service.dart';
 import '../../utils/helpers.dart';
 import '../../utils/validators.dart';
 
@@ -23,7 +24,9 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
   final _scheduleController = TextEditingController();
   final _authService = AuthService();
   final _firestoreService = FirestoreService();
+  final _locationService = LocationService();
   bool _isLoading = false;
+  bool _isLocating = false;
 
   bool get isEditing => widget.existingClass != null;
 
@@ -49,6 +52,39 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
     _radiusController.dispose();
     _scheduleController.dispose();
     super.dispose();
+  }
+
+  Future<void> _useCurrentLocation() async {
+    setState(() => _isLocating = true);
+    try {
+      final hasPermission = await _locationService.checkPermission();
+      if (!hasPermission) {
+        if (mounted) {
+          Helpers.showSnackBar(
+            context,
+            'Location permission denied. Please enable location services.',
+            isError: true,
+          );
+        }
+        return;
+      }
+      final position = await _locationService.getCurrentPosition();
+      _latController.text = position.latitude.toStringAsFixed(6);
+      _lngController.text = position.longitude.toStringAsFixed(6);
+      if (mounted) {
+        Helpers.showSnackBar(context, 'Location captured!');
+      }
+    } catch (e) {
+      if (mounted) {
+        Helpers.showSnackBar(
+          context,
+          'Failed to get location: $e',
+          isError: true,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
   }
 
   Future<void> _save() async {
@@ -128,8 +164,27 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Enter the GPS coordinates of the classroom for attendance verification.',
+                  'Use the button below to set the classroom GPS coordinates automatically.',
                   style: TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _isLocating ? null : _useCurrentLocation,
+                    icon: _isLocating
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.my_location),
+                    label: Text(
+                      _isLocating
+                          ? 'Getting location...'
+                          : 'Use My Current Location',
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -137,14 +192,11 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
                     Expanded(
                       child: TextFormField(
                         controller: _latController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
-                        ),
+                        readOnly: true,
                         validator: (v) => Validators.required(v, 'Latitude'),
                         decoration: const InputDecoration(
                           labelText: 'Latitude',
-                          hintText: 'e.g., 13.7563',
+                          hintText: 'Tap button above',
                         ),
                       ),
                     ),
@@ -152,14 +204,11 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
                     Expanded(
                       child: TextFormField(
                         controller: _lngController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
-                        ),
+                        readOnly: true,
                         validator: (v) => Validators.required(v, 'Longitude'),
                         decoration: const InputDecoration(
                           labelText: 'Longitude',
-                          hintText: 'e.g., 100.5018',
+                          hintText: 'Tap button above',
                         ),
                       ),
                     ),
