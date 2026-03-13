@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'config/theme.dart';
@@ -8,20 +9,8 @@ import 'screens/auth/login_screen.dart';
 import 'screens/student/student_home_screen.dart';
 import 'screens/instructor/instructor_home_screen.dart';
 
-class ClassCheckApp extends StatefulWidget {
+class ClassCheckApp extends StatelessWidget {
   const ClassCheckApp({super.key});
-
-  @override
-  State<ClassCheckApp> createState() => _ClassCheckAppState();
-}
-
-class _ClassCheckAppState extends State<ClassCheckApp> {
-  @override
-  void initState() {
-    super.initState();
-    // Auto-close expired sessions on app start
-    FirestoreService().closeExpiredSessions();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,75 +32,97 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   final _authService = AuthService();
-  late final Stream<User?> _authStream;
-  bool _pendingSignOut = false;
+  late final StreamSubscription<User?> _authSub;
+
+  bool _loading = true;
+  UserModel? _userModel;
 
   @override
   void initState() {
     super.initState();
-    // Cache stream to avoid re-subscriptions on rebuild
-    _authStream = _authService.authStateChanges;
+    _authSub = _authService.authStateChanges.listen(_onAuthChanged);
   }
 
-  void _safeSignOut() {
-    if (_pendingSignOut) return;
-    _pendingSignOut = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _authService.signOut();
-    });
+  @override
+  void dispose() {
+    _authSub.cancel();
+    super.dispose();
+  }
+
+  Future<void> _onAuthChanged(User? firebaseUser) async {
+    if (firebaseUser == null) {
+      if (mounted) setState(() { _userModel = null; _loading = false; });
+      return;
+    }
+
+    if (mounted) setState(() => _loading = true);
+
+    try {
+      final profile = await _authService.getUserProfile(firebaseUser.uid);
+      if (mounted) setState(() { _userModel = profile; _loading = false; });
+
+      // Run session cleanup only when an authenticated user is available
+      if (profile != null && profile.isInstructor) {
+        FirestoreService().closeExpiredSessions();
+      }
+    } catch (_) {
+      if (mounted) setState(() { _userModel = null; _loading = false; });
+    }
+  }
+
+  Future<void> _retry() async {
+    final user = _authService.currentUser;
+    if (user != null) {
+      _onAuthChanged(user);
+    } else {
+      setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: _authStream,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
-        if (snapshot.hasData && snapshot.data != null) {
-          return FutureBuilder<UserModel?>(
-            future: _authService.getUserProfile(snapshot.data!.uid),
-            builder: (context, userSnapshot) {
-              if (userSnapshot.connectionState == ConnectionState.waiting) {
-                return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
-                );
-              }
+    final firebaseUser = _authService.currentUser;
 
-              if (userSnapshot.hasError) {
-                _safeSignOut();
-                return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
-                );
-              }
+    // Not signed in
+    if (firebaseUser == null) {
+      return const LoginScreen();
+    }
 
-              final user = userSnapshot.data;
-              if (user == null) {
-                _safeSignOut();
-                return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
-                );
-              }
+    // Signed in but profile not found — show retry instead of auto-signout
+    if (_userModel == null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Could not load your profile.'),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _retry,
+                child: const Text('Retry'),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () async {
+                  await _authService.signOut();
+                },
+                child: const Text('Sign Out'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
-              // Reset flag on successful profile load
-              _pendingSignOut = false;
-
-              if (user.isInstructor) {
-                return const InstructorHomeScreen();
-              }
-              return const StudentHomeScreen();
-            },
-          );
-        }
-
-        // Not authenticated — reset flag and show login
-        _pendingSignOut = false;
-        return const LoginScreen();
-      },
-    );
+    if (_userModel!.isInstructor) {
+      return const InstructorHomeScreen();
+    }
+    return const StudentHomeScreen();
   }
 }

@@ -34,6 +34,8 @@ class AuthService {
           .collection('users')
           .doc(credential.user!.uid)
           .set(userModel.toMap());
+      // Ensure the write reaches the server before returning
+      await _firestore.waitForPendingWrites();
       return userModel;
     }
     return null;
@@ -55,9 +57,12 @@ class AuthService {
     return null;
   }
 
-  // Get user profile from Firestore
+  // Get user profile from Firestore (always fetch from server)
   Future<UserModel?> getUserProfile(String uid) async {
-    final doc = await _firestore.collection('users').doc(uid).get();
+    final doc = await _firestore
+        .collection('users')
+        .doc(uid)
+        .get(const GetOptions(source: Source.server));
     if (doc.exists) {
       return UserModel.fromMap(doc.data()!, uid);
     }
